@@ -1,136 +1,76 @@
-# NewsPrism
+# NewsPrism — The Agentic Bias Ledger
 
-A comprehensive news analysis platform that detects bias, extracts facts, and shows how different outlets frame the same events.
+NewsPrism analyzes how different outlets frame the **same** event. A newsroom of
+autonomous agents ingests articles, groups coverage of the same story, verifies the
+facts each source reports, flags what they omit, and computes a transparent, dynamically
+weighted **Bias Index**.
 
-## Features
+## What makes it agentic
 
-- **Multi-source news aggregation** from NewsAPI and custom scrapers
-- **Semantic clustering** of articles covering the same events
-- **Bias detection** using sentiment analysis, lexical analysis, and omission detection
-- **Fact extraction** with cross-source verification
-- **Interactive dashboard** showing fact summaries vs. framing analysis
-- **Bias Index & Transparency Scores** for each source
+The pipeline is a real multi-agent loop, not a fixed script. Each stage streams its
+progress live to the UI (Server-Sent Events), so you can watch the newsroom work:
 
-## Architecture
+| Agent | Role |
+|-------|------|
+| **Editor-in-Chief** (orchestrator) | Plans coverage, classifies the story, decides whether to loop for more sources |
+| **Ingestor / Scraper** | Searches the news wire and scrapes full article text |
+| **Researcher** | When coverage is thin or one-sided, re-queries for more diverse sources |
+| **Story Clusterer** | Embeds articles and runs **DBSCAN** to group coverage of the same event |
+| **Fact-Checker** | Extracts candidate claims and cross-checks them across sources (supported / contradicted / unverified) |
+| **Bias Auditor** | Infers **dynamic weights** for the Bias Index based on the story, then self-corrects them from evidence |
+| **Copy Editor** | Consolidates and persists the finished report |
 
-- **Backend**: FastAPI (Python) with LangChain agent orchestration
-- **Frontend**: React with Chart.js for visualizations
-- **Database**: MongoDB for metadata, Pinecone for vectors
-- **NLP**: spaCy for NER, Hugging Face transformers for sentiment, sentence-transformers for embeddings
-- **LLM**: Groq (llama-3.3-70b-versatile) for fact verification and summarization
+The Editor-in-Chief and Fact-Checker use the **Groq API** (Llama 3.3 70B) to make
+routing decisions (e.g. *ingest more vs. proceed*) and to infer the Bias Index weights,
+so the same query can take a different path depending on what the evidence looks like.
 
-## Quick Start
+## The Bias Index
 
-### Prerequisites
+A 0–100 score for how strongly a source *frames* a story (not whether it is "right"):
 
-- Python 3.9+
-- Node.js 18+
-- MongoDB (local or Atlas)
-- Pinecone account (for vector storage)
-- NewsAPI account
-- Groq API key
+```
+index = 100 × ( w_tone·Δtone + w_lex·lexical + w_om·omission + w_cons·consistency + dissonance ) ÷ 1.3
+```
 
-### Backend Setup
+- **Δtone** — deviation of this source's sentiment from the cluster average (RoBERTa sentiment)
+- **lexical** — density of loaded / emotive / prescriptive language (spaCy)
+- **omission** — share of the cluster's verified facts the source leaves out (semantic omission detection)
+- **consistency** — internal subjectivity vs. the shared facts
+- **dissonance** — penalty when tone clashes with the emotional weight of the verified facts
+
+Weights (`w_*`) are set per-story by the Bias Auditor agent and shown in the UI, so the
+score is fully transparent — the cluster page breaks down every source's contribution.
+
+## Setup
+
+### Backend
 
 ```bash
 cd backend
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
-# Create .env file (see RUN_INSTRUCTIONS.md for template)
-# Edit .env with your API keys (MongoDB, Pinecone, Groq, NewsAPI)
-python run.py  # or: python -m uvicorn app.main:app --reload
+python run.py            # http://localhost:8000  (docs at /docs)
 ```
 
-**Note**: MongoDB doesn't require migrations. Make sure MongoDB is running before starting the backend.
-
-### Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env
-# Edit .env with your backend URL (default: http://localhost:8000/api/v1)
-npm run dev
+npm run dev              # http://localhost:3000
 ```
 
-### Environment Variables
+## Environment Variables
 
-Create a `.env` file in `backend/` with:
-- `MONGODB_URL` - MongoDB connection string (default: `mongodb://localhost:27017`)
-- `PINECONE_API_KEY` - Your Pinecone API key
-- `GROQ_API_KEY` - Your Groq API key (get from https://console.groq.com/keys)
-- `NEWSAPI_KEY` - Your NewsAPI key
+Create `.env` in `backend/`:
 
-For detailed setup instructions, see [RUN_INSTRUCTIONS.md](RUN_INSTRUCTIONS.md) or [SETUP.md](SETUP.md).
-
-## Project Structure
-
-```
-newsprism/
-├── backend/
-│   ├── app/
-│   │   ├── api/          # FastAPI routes
-│   │   ├── core/         # Config, database, security
-│   │   ├── models/       # Database models
-│   │   ├── services/     # Business logic
-│   │   │   ├── ingestion/    # News scraping
-│   │   │   ├── embeddings/   # Vector embeddings
-│   │   │   ├── clustering/   # Event clustering
-│   │   │   ├── bias/         # Bias analysis
-│   │   │   ├── facts/        # Fact extraction
-│   │   │   └── agents/       # LangChain agents
-│   │   └── schemas/      # Pydantic schemas
-│   └── main.py
-├── frontend/
-│   ├── src/
-│   │   ├── components/   # React components
-│   │   ├── pages/        # Page components
-│   │   ├── services/     # API clients
-│   │   └── utils/        # Utilities
-│   └── package.json
-└── README.md
-```
-
-## API Endpoints
-
-- `GET /` - API root
-- `GET /health` - Health check
-- `GET /docs` - Interactive API documentation (Swagger UI)
-- `POST /api/v1/search` - Search for articles by query
-- `POST /api/v1/search/analyze` - Trigger full analysis pipeline for a query
-- `GET /api/v1/search/clusters/{cluster_id}` - Get cluster details
-- `GET /api/v1/search/articles/{article_id}` - Get article details
+- `MONGODB_URL` — MongoDB connection string (stores articles & clusters)
+- `GROQ_API_KEY` — Groq API key (agent reasoning + fact verification)
+- `NEWSAPI_KEY` — NewsAPI key (article discovery)
+- `PINECONE_API_KEY` — *optional*; clustering runs locally with DBSCAN and does not require it
 
 ## Tech Stack
 
-- **Backend**: FastAPI, Pydantic v2, MongoDB (Motor), Pinecone, Groq
+- **Backend**: FastAPI, MongoDB (Motor), Groq (Llama 3.3 70B), SSE streaming
 - **Frontend**: React, Vite, Tailwind CSS, Chart.js
-- **ML/NLP**: spaCy, Hugging Face Transformers, Sentence Transformers
-
-## Getting API Keys
-
-1. **Groq**: https://console.groq.com/keys (for LLM features)
-2. **Pinecone**: https://www.pinecone.io (for vector storage)
-3. **NewsAPI**: https://newsapi.org (for news articles)
-
-## Quick Troubleshooting
-
-- **Backend won't start**: Check `.env` file exists and MongoDB is running
-- **Import errors**: Make sure you've installed dependencies: `pip install -r requirements.txt`
-- **Missing modules**: Install spaCy model: `python -m spacy download en_core_web_sm`
-- **CORS errors**: Backend defaults allow `localhost:3000` and `localhost:5173`
-- **Pinecone errors**: Make sure your Pinecone index exists and API key is correct
-
-For more detailed troubleshooting, see [RUN_INSTRUCTIONS.md](RUN_INSTRUCTIONS.md).
-
-## Documentation
-
-- [RUN_INSTRUCTIONS.md](RUN_INSTRUCTIONS.md) - Detailed setup and run instructions
-- [SETUP.md](SETUP.md) - Complete setup guide
-- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture details
-- [GROQ_MIGRATION.md](GROQ_MIGRATION.md) - Migration notes (Grok → Groq)
-
-## License
-
-MIT
-
+- **NLP / ML**: SentenceTransformers (all-MiniLM-L6-v2), scikit-learn (DBSCAN), spaCy, Hugging Face Transformers

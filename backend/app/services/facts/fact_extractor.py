@@ -1,7 +1,9 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
 import spacy
 import httpx
+import numpy as np
 from app.core.config import settings
+from app.services.embeddings.embedding_service import EmbeddingService
 
 
 class FactExtractor:
@@ -14,22 +16,25 @@ class FactExtractor:
         
         self.groq_api_key = settings.GROQ_API_KEY
         self.groq_api_url = settings.GROQ_API_URL
+        self.embedding_service = EmbeddingService()
     
     async def extract_facts_from_articles(
         self,
-        articles: List[Dict]
+        articles: List[Dict],
+        query: Optional[str] = None
     ) -> List[Dict]:
-        """Extract facts from a list of articles"""
-        # Step 1: Extract candidate facts using NER
         candidate_facts = self._extract_candidate_facts(articles)
-        
-        # Step 2: Verify facts across sources using LLM
+        print(f"[fact_extractor] articles={len(articles)} candidates={len(candidate_facts)}")
+
+        if query:
+            candidate_facts = await self._filter_by_semantic_relevance(candidate_facts, query)
+            print(f"[fact_extractor] after semantic filter: {len(candidate_facts)}")
+
         verified_facts = await self._verify_facts_with_llm(candidate_facts, articles)
-        
+        print(f"[fact_extractor] verified: {len(verified_facts)}")
         return verified_facts
     
     def _extract_candidate_facts(self, articles: List[Dict]) -> List[Dict]:
-        """Extract candidate facts using NER"""
         if not self.nlp:
             return self._simple_fact_extraction(articles)
         
@@ -39,7 +44,6 @@ class FactExtractor:
             text = article.get("text", "")
             doc = self.nlp(text)
             
-            # Extract entities and key sentences
             entities = {}
             for ent in doc.ents:
                 if ent.label_ in ["PERSON", "ORG", "GPE", "EVENT", "DATE"]:
@@ -47,21 +51,37 @@ class FactExtractor:
                         entities[ent.label_] = []
                     entities[ent.label_].append(ent.text)
             
-            # Extract sentences with entities (likely factual)
             for sent in doc.sents:
+                sent_text = sent.text.strip()
+                word_count = len(sent_text.split())
+                
+                if word_count < 10:
+                    continue
+                
                 has_entity = any(ent in sent.text for ents in entities.values() for ent in ents)
-                if has_entity and len(sent.text) > 20:
-                    facts.append({
-                        "fact": sent.text.strip(),
-                        "source_url": article.get("url"),
-                        "source_name": article.get("source"),
-                        "entities": {k: list(set(v)) for k, v in entities.items()}
-                    })
+                if has_entity and len(sent_text) > 20:
+                    if not FactExtractor._is_noise(sent_text):
+                        facts.append({
+                            "fact": sent_text,
+                            "source_url": article.get("url"),
+                            "source_name": article.get("source"),
+                            "entities": {k: list(set(v)) for k, v in entities.items()}
+                        })
         
-        return facts[:50]  # Limit for performance
+        return facts[:50]
+    
+    @staticmethod
+    def _is_noise(text: str) -> bool:
+        text_lower = text.lower()
+        noise_indicators = [
+            'photo credit', 'representative image', 'image:', 'photo:',
+            'click here', 'read more', 'subscribe', 'follow us', 'share this',
+            'advertisement', 'ad:', 'sponsored', 'breaking news', 'live:',
+            'none...', 'loading...', 'cookie', 'privacy policy', 'terms of service'
+        ]
+        return any(indicator in text_lower for indicator in noise_indicators)
     
     def _simple_fact_extraction(self, articles: List[Dict]) -> List[Dict]:
-        """Simple fact extraction without spaCy"""
         facts = []
         
         for article in articles:
@@ -69,33 +89,70 @@ class FactExtractor:
             sentences = text.split('.')
             
             for sent in sentences:
-                if len(sent.strip()) > 30:
-                    if any(c.isdigit() for c in sent) or any(c.isupper() for c in sent[:10]):
-                        facts.append({
-                            "fact": sent.strip(),
-                            "source_url": article.get("url"),
-                            "source_name": article.get("source"),
-                            "entities": {}
-                        })
+                sent_text = sent.strip()
+                word_count = len(sent_text.split())
+                
+                if word_count < 10 or len(sent_text) < 30:
+                    continue
+                
+                if FactExtractor._is_noise(sent_text):
+                    continue
+                
+                if any(c.isdigit() for c in sent) or any(c.isupper() for c in sent[:10]):
+                    facts.append({
+                        "fact": sent_text,
+                        "source_url": article.get("url"),
+                        "source_name": article.get("source"),
+                        "entities": {}
+                    })
         
         return facts[:50]
+    
+    async def _filter_by_semantic_relevance(
+        self,
+        candidate_facts: List[Dict],
+        query: str,
+        threshold: float = 0.32,
+        min_keep: int = 10,
+        max_keep: int = 30,
+    ) -> List[Dict]:
+        """Keep the facts most semantically related to the query.
+
+        Short queries vs. full sentences rarely exceed ~0.5 cosine similarity
+        with MiniLM, so a hard high threshold silently discards everything.
+        Instead: rank all candidates by similarity, keep those above a modest
+        threshold, and always keep at least ``min_keep`` so the fact-checking
+        stage is never starved.
+        """
+        if not candidate_facts or not query:
+            return candidate_facts
+
+        texts = [f.get("fact", "") for f in candidate_facts]
+        query_embedding = np.array(self.embedding_service.embed_text(query))
+        fact_embeddings = np.array(self.embedding_service.embed_batch(texts))
+
+        # Embeddings are normalized by the service; dot product = cosine sim.
+        sims = fact_embeddings @ query_embedding
+
+        ranked = sorted(zip(candidate_facts, sims), key=lambda x: x[1], reverse=True)
+        above = [f for f, s in ranked if s >= threshold]
+
+        if len(above) >= min_keep:
+            return above[:max_keep]
+        return [f for f, _ in ranked[:min_keep]]
     
     async def _verify_facts_with_llm(
         self,
         candidate_facts: List[Dict],
         articles: List[Dict]
     ) -> List[Dict]:
-        """Verify facts using LLM cross-checking"""
         verified_facts = []
-        
-        # Group similar facts
         fact_groups = self._group_similar_facts(candidate_facts)
         
-        for fact_group in fact_groups[:20]:  # Limit for cost
+        for fact_group in fact_groups[:20]:
             prompt = self._create_verification_prompt(fact_group, articles)
             
             try:
-                # Use Groq API
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
                         f"{self.groq_api_url}/chat/completions",
@@ -104,7 +161,6 @@ class FactExtractor:
                             "Content-Type": "application/json"
                         },
                         json={
-                            # CHANGED: Updated from mixtral-8x7b-32768 to llama-3.3-70b-versatile
                             "model": "llama-3.3-70b-versatile",
                             "messages": [
                                 {
@@ -124,12 +180,9 @@ class FactExtractor:
                     
                     if response.status_code != 200:
                         print(f"Groq API Error in Verification ({response.status_code}): {response.text}")
-                        # Continue to next fact instead of crashing
                         continue
 
                     data = response.json()
-                    
-                    # Parse response
                     content = data["choices"][0]["message"]["content"]
                     result = self._parse_verification_response(
                         content,
@@ -137,13 +190,12 @@ class FactExtractor:
                         articles
                     )
                 
-                if result:
+                if result and result.get("status") != "rejected":
                     verified_facts.append(result)
             
             except Exception as e:
                 print(f"Error in LLM verification: {str(e)}")
-                # Fallback: mark as unverified
-                if fact_group:
+                if fact_group and not FactExtractor._is_noise(fact_group[0].get("fact", "")):
                     verified_facts.append({
                         "fact": fact_group[0].get("fact", ""),
                         "sources": [f.get("source_url", "") for f in fact_group],
@@ -154,7 +206,6 @@ class FactExtractor:
         return verified_facts
     
     def _group_similar_facts(self, facts: List[Dict]) -> List[List[Dict]]:
-        """Group similar facts together"""
         groups = []
         used = set()
         
@@ -172,8 +223,6 @@ class FactExtractor:
                     continue
                 
                 other_keywords = set(self._extract_keywords(other_fact.get("fact", "")))
-                
-                # If significant overlap, group together
                 overlap = len(fact_keywords & other_keywords)
                 if overlap >= 2:
                     group.append(other_fact)
@@ -184,7 +233,6 @@ class FactExtractor:
         return groups
     
     def _extract_keywords(self, text: str) -> List[str]:
-        """Extract keywords from text"""
         words = text.lower().split()
         stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for"}
         return [w.strip('.,!?;:') for w in words if w.lower() not in stop_words and len(w) > 3]
@@ -194,7 +242,6 @@ class FactExtractor:
         fact_group: List[Dict],
         articles: List[Dict]
     ) -> str:
-        """Create prompt for LLM fact verification"""
         fact_text = fact_group[0].get("fact", "")
         
         sources_text = "\n".join([
@@ -203,9 +250,18 @@ class FactExtractor:
             for f in fact_group[:5]
         ])
         
-        prompt = f"""You are a fact verification assistant. Given a candidate fact and excerpts from multiple sources, determine:
+        prompt = f"""You are a fact verification assistant. Given a candidate fact and excerpts from multiple sources, FIRST determine if it is a substantive news claim.
 
-1. Is the fact (A) Supported - appears verbatim or clearly implied by at least one reliable source
+REJECT if the candidate is:
+- A photo credit, image caption, or image description
+- A navigation link, site tagline, or UI element
+- A breaking news alert or notification
+- An advertisement or sponsored content
+- A social media prompt (e.g., "Click here", "Share this")
+- Metadata or boilerplate text
+
+If it IS a substantive news claim, then determine:
+1. (A) Supported - appears verbatim or clearly implied by at least one reliable source
 2. (B) Contradicted - some sources claim the opposite
 3. (C) Unverified - no sufficient evidence
 
@@ -215,9 +271,9 @@ Sources:
 {sources_text}
 
 Return your analysis in this format:
-STATUS: [A/B/C]
+STATUS: [A/B/C/REJECTED]
 JUSTIFICATION: [1-line explanation]
-QUOTES: [up to 2 supporting quotes with source URLs]
+QUOTES: [up to 2 supporting quotes with source URLs, or N/A if REJECTED]
 """
         return prompt
     
@@ -227,7 +283,6 @@ QUOTES: [up to 2 supporting quotes with source URLs]
         fact_group: List[Dict],
         articles: List[Dict]
     ) -> Dict:
-        """Parse LLM verification response"""
         lines = response.split('\n')
         
         status = "unverified"
@@ -237,7 +292,9 @@ QUOTES: [up to 2 supporting quotes with source URLs]
         for line in lines:
             if line.startswith("STATUS:"):
                 status_part = line.split(":", 1)[1].strip().upper()
-                if "A" in status_part or "supported" in status_part.lower():
+                if "REJECTED" in status_part or "reject" in status_part.lower():
+                    return None
+                elif "A" in status_part or "supported" in status_part.lower():
                     status = "supported"
                 elif "B" in status_part or "contradicted" in status_part.lower():
                     status = "contradicted"
@@ -245,7 +302,8 @@ QUOTES: [up to 2 supporting quotes with source URLs]
                 justification = line.split(":", 1)[1].strip()
             elif line.startswith("QUOTES:"):
                 quotes_text = line.split(":", 1)[1].strip()
-                quotes = [q.strip() for q in quotes_text.split('\n') if q.strip()]
+                if quotes_text.upper() != "N/A":
+                    quotes = [q.strip() for q in quotes_text.split('\n') if q.strip() and q.strip().upper() != "N/A"]
         
         if not quotes:
             quotes = [f.get("fact", "")[:100] for f in fact_group[:2]]

@@ -8,10 +8,11 @@ from app.core.database import connect_to_mongo, close_mongo_connection
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    await connect_to_mongo()
+    try:
+        await connect_to_mongo()
+    except Exception as e:
+        print(f"Startup warning: {str(e)}")
     yield
-    # Shutdown
     await close_mongo_connection()
 
 
@@ -24,7 +25,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -33,7 +33,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 

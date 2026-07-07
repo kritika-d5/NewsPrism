@@ -10,12 +10,10 @@ class EmbeddingService:
         self.dimension = settings.EMBEDDING_DIMENSION
     
     def embed_text(self, text: str) -> List[float]:
-        """Generate embedding for a single text"""
         embedding = self.model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
         return embedding.tolist()
     
     def embed_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
-        """Generate embeddings for a batch of texts"""
         embeddings = self.model.encode(
             texts,
             batch_size=batch_size,
@@ -26,7 +24,6 @@ class EmbeddingService:
         return embeddings.tolist()
     
     def chunk_text(self, text: str, chunk_size: int = 512, overlap: int = 50) -> List[dict]:
-        """Split text into chunks with overlap"""
         words = text.split()
         chunks = []
         
@@ -43,7 +40,6 @@ class EmbeddingService:
         return chunks
     
     def embed_article(self, text: str, chunk_size: int = 512) -> List[dict]:
-        """Embed an article by chunking and embedding each chunk"""
         chunks = self.chunk_text(text, chunk_size)
         
         texts = [chunk["text"] for chunk in chunks]

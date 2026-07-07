@@ -1,60 +1,70 @@
 import React from 'react'
 
-function ClusterCard({ cluster, onClick }) {
-  const avgBias = cluster.bias_results?.length > 0
-    ? cluster.bias_results.reduce((sum, r) => sum + (r.bias_index || 0), 0) / cluster.bias_results.length
+export function biasLabel(v) {
+  if (v >= 70) return 'Heavily Framed'
+  if (v >= 40) return 'Noticeably Framed'
+  if (v >= 20) return 'Lightly Framed'
+  return 'Measured'
+}
+
+function ClusterCard({ cluster, index, onClick }) {
+  const results = cluster.bias_results || []
+  const avgBias = results.length
+    ? results.reduce((s, r) => s + (r.bias_index || 0), 0) / results.length
     : 0
+  const sources = [...new Set(results.map((r) => r.source).filter(Boolean))]
 
   return (
-    <div
+    <article
       onClick={onClick}
-      className="bg-white rounded-lg shadow p-6 cursor-pointer hover:shadow-lg transition-shadow"
+      className="card p-5 cursor-pointer hover:-translate-y-0.5 hover:shadow-[5px_5px_0_rgba(20,17,12,0.9)] transition-all"
     >
-      <div className="flex justify-between items-start mb-4">
-        <div>
-          <h3 className="text-lg font-semibold mb-1">Cluster</h3>
-          <p className="text-sm text-gray-600">
-            {cluster.articles_count} articles • {cluster.facts_count} facts
-          </p>
-        </div>
-        <div className="text-right">
-          <div className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
-            avgBias > 70 ? 'bg-red-100 text-red-800' :
-            avgBias > 40 ? 'bg-yellow-100 text-yellow-800' :
-            'bg-green-100 text-green-800'
-          }`}>
-            Avg Bias: {avgBias.toFixed(1)}
-          </div>
-        </div>
+      <div className="flex items-baseline justify-between mb-2">
+        <span className="kicker">Story Cluster № {String(index + 1).padStart(2, '0')}</span>
+        <span className="dateline text-xs text-ink-faint">
+          {cluster.articles_count} art. · {cluster.facts_count} facts
+        </span>
       </div>
 
-      {cluster.bias_results && cluster.bias_results.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-gray-700">Sources:</p>
-          <div className="flex flex-wrap gap-2">
-            {cluster.bias_results.slice(0, 5).map((result, idx) => (
-              <span
-                key={idx}
-                className="px-2 py-1 bg-gray-100 rounded text-xs"
-              >
-                {result.source}
-              </span>
-            ))}
-            {cluster.bias_results.length > 5 && (
-              <span className="px-2 py-1 bg-gray-100 rounded text-xs">
-                +{cluster.bias_results.length - 5} more
-              </span>
-            )}
-          </div>
+      <div className="rule-thin mb-3" />
+
+      <h4 className="headline text-2xl leading-tight mb-3">
+        {sources.length
+          ? `${sources.length} outlet${sources.length === 1 ? '' : 's'} on the same event`
+          : 'Coverage cluster'}
+      </h4>
+
+      {/* Bias meter */}
+      <div className="mb-3">
+        <div className="flex justify-between items-baseline mb-1">
+          <span className="kicker">Avg. Bias Index</span>
+          <span className="font-mono text-sm font-semibold">{avgBias.toFixed(0)}<span className="text-ink-faint">/100</span></span>
+        </div>
+        <div className="h-3 border border-ink relative overflow-hidden">
+          <div className="h-full halftone" style={{ width: `${Math.min(100, avgBias)}%` }} />
+        </div>
+        <p className="dateline text-[11px] uppercase tracking-wider mt-1 text-ink-soft">{biasLabel(avgBias)}</p>
+      </div>
+
+      {sources.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {sources.slice(0, 5).map((s, i) => (
+            <span key={i} className="px-1.5 py-0.5 text-[10px] font-mono border border-ink-faint text-ink-soft">
+              {s}
+            </span>
+          ))}
+          {sources.length > 5 && (
+            <span className="px-1.5 py-0.5 text-[10px] font-mono text-ink-faint">+{sources.length - 5}</span>
+          )}
         </div>
       )}
 
-      <div className="mt-4 text-sm text-blue-600 hover:text-blue-800">
-        View details →
+      <div className="rule-thin pt-2 flex justify-between items-center">
+        <span className="dateline text-xs text-ink-faint">Full framing analysis</span>
+        <span className="font-display font-bold text-sm">Read the ledger →</span>
       </div>
-    </div>
+    </article>
   )
 }
 
 export default ClusterCard
-

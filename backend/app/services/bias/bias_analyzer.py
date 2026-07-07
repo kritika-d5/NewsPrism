@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 import numpy as np
 from transformers import pipeline
 import spacy
@@ -7,21 +7,18 @@ from app.core.config import settings
 
 class BiasAnalyzer:
     def __init__(self):
-        # Load sentiment analysis model
         self.sentiment_pipeline = pipeline(
             "sentiment-analysis",
             model="cardiffnlp/twitter-roberta-base-sentiment-latest",
-            device=-1  # CPU
+            device=-1
         )
         
-        # Load spaCy for NLP features
         try:
             self.nlp = spacy.load("en_core_web_sm")
         except OSError:
             print("spaCy model not found. Run: python -m spacy download en_core_web_sm")
             self.nlp = None
         
-        # Loaded language patterns
         self.loaded_patterns = {
             "emotive": ["shocking", "devastating", "tragic", "outrageous", "scandalous"],
             "prescriptive": ["must", "should", "ought", "need to"],
@@ -30,14 +27,8 @@ class BiasAnalyzer:
         }
     
     def analyze_article(self, text: str) -> Dict:
-        """Analyze bias in an article"""
-        # Tone analysis (sentiment)
         tone_score = self._analyze_tone(text)
-        
-        # Lexical bias
         lexical_bias = self._analyze_lexical_bias(text)
-        
-        # Subjectivity
         subjectivity = self._analyze_subjectivity(text)
         
         return {
@@ -48,9 +39,7 @@ class BiasAnalyzer:
         }
     
     def _analyze_tone(self, text: str) -> float:
-        """Analyze sentiment/tone (-1 to 1)"""
-        # Split into sentences for better analysis
-        sentences = text.split('.')[:10]  # Limit for performance
+        sentences = text.split('.')[:10]
         
         if not sentences:
             return 0.0
@@ -65,7 +54,6 @@ class BiasAnalyzer:
                 label = result['label'].lower()
                 score = result['score']
                 
-                # Map to -1 to 1 scale
                 if 'positive' in label:
                     scores.append(score)
                 elif 'negative' in label:
@@ -81,7 +69,6 @@ class BiasAnalyzer:
         return np.mean(scores)
     
     def _analyze_lexical_bias(self, text: str) -> float:
-        """Analyze lexical bias (0 to 1)"""
         if not self.nlp:
             return self._simple_lexical_bias(text)
         
@@ -92,16 +79,11 @@ class BiasAnalyzer:
             return 0.0
         
         loaded_count = 0
-        
-        # Check for loaded language patterns
         for pattern_type, words in self.loaded_patterns.items():
             for word in words:
                 loaded_count += text.lower().count(word)
         
-        # Check for adjectives and adverbs (indicators of opinion)
         adj_adv_count = len([t for t in doc if t.pos_ in ['ADJ', 'ADV']])
-        
-        # Combine metrics
         lexical_score = min(
             (loaded_count * 2 + adj_adv_count * 0.1) / total_tokens,
             1.0
@@ -110,7 +92,6 @@ class BiasAnalyzer:
         return lexical_score
     
     def _simple_lexical_bias(self, text: str) -> float:
-        """Simple lexical bias without spaCy"""
         words = text.lower().split()
         total_words = len(words)
         
@@ -125,8 +106,6 @@ class BiasAnalyzer:
         return min(loaded_count / total_words, 1.0)
     
     def _analyze_subjectivity(self, text: str) -> float:
-        """Analyze subjectivity (0 to 1)"""
-        # Simple heuristic: ratio of opinion indicators
         opinion_indicators = [
             "i think", "i believe", "in my opinion", "seems", "appears",
             "likely", "probably", "suggests", "indicates"
@@ -134,13 +113,10 @@ class BiasAnalyzer:
         
         text_lower = text.lower()
         indicator_count = sum(1 for indicator in opinion_indicators if indicator in text_lower)
-        
-        # Normalize by text length
         sentences = text.split('.')
         return min(indicator_count / max(len(sentences), 1), 1.0)
     
     def _extract_loaded_phrases(self, text: str, max_phrases: int = 8) -> List[Dict]:
-        """Extract loaded/biased phrases from text"""
         phrases = []
         
         if not self.nlp:
@@ -148,16 +124,14 @@ class BiasAnalyzer:
         
         doc = self.nlp(text)
         
-        # Find phrases with loaded words
         for sent in doc.sents:
             sent_text = sent.text.lower()
             
             for pattern_type, words in self.loaded_patterns.items():
                 for word in words:
                     if word in sent_text:
-                        # Extract the sentence or phrase
                         phrases.append({
-                            "phrase": sent.text[:100],  # Truncate
+                            "phrase": sent.text[:100],
                             "type": pattern_type,
                             "reason": f"Contains {pattern_type} language"
                         })
@@ -173,40 +147,59 @@ class BiasAnalyzer:
         lexical_bias: float,
         omission_score: float,
         consistency_score: float,
-        cluster_mean_tone: float
+        cluster_mean_tone: float,
+        fact_emotion: float = 0.0,
+        weights: Optional[Dict[str, float]] = None
     ) -> float:
-        """Compute Bias Index (0 to 100)"""
-        # Tone deviation from cluster mean
-        tone_deviation = abs(tone_score - cluster_mean_tone)
-        
-        # Weighted combination
+        if weights is None:
+            weights = {
+                "tone": settings.BIAS_WEIGHT_TONE,
+                "lexical": settings.BIAS_WEIGHT_LEXICAL,
+                "omission": settings.BIAS_WEIGHT_OMISSION,
+                "consistency": settings.BIAS_WEIGHT_CONSISTENCY,
+            }
+
+        weight_sum = sum(weights.values()) or 1.0
+        weights = {k: v / weight_sum for k, v in weights.items()}
+
+        tone_deviation = abs(tone_score - cluster_mean_tone) / 2.0
+        tone_deviation = max(0.0, min(1.0, tone_deviation))
+
+        dissonance_penalty = 0.0
+        if fact_emotion != 0.0:
+            emotion_delta_norm = abs(tone_score - fact_emotion) / 2.0
+            if emotion_delta_norm > 0.25:
+                dissonance_penalty = min(0.3, emotion_delta_norm * 0.3)
+
         bias_mag = (
-            settings.BIAS_WEIGHT_TONE * tone_deviation +
-            settings.BIAS_WEIGHT_LEXICAL * lexical_bias +
-            settings.BIAS_WEIGHT_OMISSION * omission_score +
-            settings.BIAS_WEIGHT_CONSISTENCY * consistency_score
+            weights["tone"] * tone_deviation
+            + weights["lexical"] * lexical_bias
+            + weights["omission"] * omission_score
+            + weights["consistency"] * consistency_score
+            + dissonance_penalty
         )
-        
-        # Normalize to 0-100 (assuming max possible is around 2.0)
-        bias_index = min(100 * (bias_mag / 2.0), 100)
-        
+
+        bias_index = min(100.0, 100.0 * (bias_mag / 1.3))
         return bias_index
     
     def compute_transparency_score(
         self,
         omission_score: float,
         consistency_score: float,
-        lexical_bias: float
+        lexical_bias: float,
+        weights: Optional[Dict[str, float]] = None,
     ) -> float:
-        """Compute Transparency Score (0 to 100)"""
-        # Higher transparency = lower omissions, conflicts, loaded language
-        transparency = 100 * (
-            1 - (
-                0.4 * omission_score +
-                0.4 * consistency_score +
-                0.2 * lexical_bias
-            )
-        )
-        
-        return max(0, min(100, transparency))
+        if weights is None:
+            weights = {"lexical": 0.2, "omission": 0.4, "consistency": 0.4}
+
+        lex_w = weights.get("lexical", 0.0)
+        om_w = weights.get("omission", 0.0)
+        cons_w = weights.get("consistency", 0.0)
+        w_sum = (lex_w + om_w + cons_w) or 1.0
+        lex_w /= w_sum
+        om_w /= w_sum
+        cons_w /= w_sum
+
+        transparency = 100.0 * (1.0 - (om_w * omission_score + cons_w * consistency_score + lex_w * lexical_bias))
+        return max(0.0, min(100.0, transparency))
 

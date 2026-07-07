@@ -47,7 +47,6 @@ class PyObjectId(ObjectId):
 
 
 class Article(BaseModel):
-    """Article model for MongoDB"""
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     source: str
     url: str
@@ -60,18 +59,15 @@ class Article(BaseModel):
     country: Optional[str] = None
     scraped_at: datetime = Field(default_factory=datetime.utcnow)
     
-    # Metadata
     chunks: Optional[List[Dict[str, Any]]] = None
     ner_entities: Optional[List[Dict[str, Any]]] = None
     
-    # Bias metadata
     tone_score: Optional[float] = None
     lexical_bias_score: Optional[float] = None
     omission_score: Optional[float] = None
     consistency_score: Optional[float] = None
     bias_index: Optional[float] = None
     
-    # Clustering
     cluster_id: Optional[str] = None
     
     model_config = {
@@ -90,13 +86,11 @@ class Article(BaseModel):
 
 
 class Cluster(BaseModel):
-    """Cluster model for MongoDB"""
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     query: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     canonical_article_id: Optional[str] = None
     
-    # Analysis results
     fact_summary: Optional[str] = None
     frame_summary: Optional[List[Dict[str, Any]]] = None
     facts: Optional[List[Dict[str, Any]]] = None
@@ -108,10 +102,9 @@ class Cluster(BaseModel):
 
 
 class ArticleAnalysis(BaseModel):
-    """ArticleAnalysis model for MongoDB"""
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     article_id: str
-    analysis_type: str  # 'sentiment', 'lexical', 'omission', etc.
+    analysis_type: str
     result: Dict[str, Any]
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
@@ -121,7 +114,6 @@ class ArticleAnalysis(BaseModel):
     }
 
 
-# MongoDB collection indexes
 ARTICLE_INDEXES = [
     IndexModel([("source", 1)]),
     IndexModel([("published_at", -1)]),

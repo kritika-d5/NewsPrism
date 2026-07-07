@@ -1,7 +1,24 @@
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, Field, field_validator
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, time
 from uuid import UUID
+
+
+def _coerce_date_bound(value: Any, *, end_of_day: bool) -> Any:
+    """Accept bare dates ("2026-07-01") from HTML date inputs.
+
+    Pydantic v2 requires a time component for datetime fields, so widen the
+    accepted input here: a date-only string becomes midnight (for lower
+    bounds) or 23:59:59 (for upper bounds, making the range inclusive).
+    """
+    if isinstance(value, str):
+        v = value.strip()
+        if not v:
+            return None
+        if len(v) == 10:  # "YYYY-MM-DD"
+            suffix = "T23:59:59" if end_of_day else "T00:00:00"
+            return v + suffix
+    return value
 
 
 class ArticleBase(BaseModel):
@@ -44,6 +61,7 @@ class ArticleResponse(ArticleBase):
     consistency_score: Optional[float] = None
     bias_index: Optional[float] = None
     cluster_id: Optional[str] = None  # Changed from Optional[UUID]
+    missing_facts: List[Dict[str, Any]] = Field(default_factory=list)
     
     class Config:
         from_attributes = True
@@ -77,21 +95,35 @@ class ClusterResponse(BaseModel):
     frame_summary: Optional[List[FrameSummary]] = None
     facts: Optional[List[Fact]] = None
     articles: List[ArticleResponse]
-    
+    news_category: Optional[str] = None
+    fact_emotion: Optional[float] = None
+    bias_weights: Optional[Dict[str, float]] = None
+
     class Config:
         from_attributes = True
 
 
-class SearchRequest(BaseModel):
-    query: str
+class _DateRangeRequest(BaseModel):
     date_from: Optional[datetime] = None
     date_to: Optional[datetime] = None
+
+    @field_validator("date_from", mode="before")
+    @classmethod
+    def _parse_date_from(cls, v):
+        return _coerce_date_bound(v, end_of_day=False)
+
+    @field_validator("date_to", mode="before")
+    @classmethod
+    def _parse_date_to(cls, v):
+        return _coerce_date_bound(v, end_of_day=True)
+
+
+class SearchRequest(_DateRangeRequest):
+    query: str
     sources: Optional[List[str]] = None
     limit: int = 50
 
 
-class AnalyzeRequest(BaseModel):
+class AnalyzeRequest(_DateRangeRequest):
     query: str
-    date_from: Optional[datetime] = None
-    date_to: Optional[datetime] = None
     sources: Optional[List[str]] = None

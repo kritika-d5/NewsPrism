@@ -1,30 +1,31 @@
 import React, { useState } from 'react'
 
+const SUGGESTIONS = ['Israel Gaza ceasefire', 'US election', 'OpenAI', 'India economy', 'climate summit']
+
 function SearchForm({ onSubmit, disabled }) {
   const [query, setQuery] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [sources, setSources] = useState('')
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    
-    const formData = {
-      query,
+  const submit = (q) => {
+    onSubmit({
+      query: q,
       dateFrom: dateFrom || null,
       dateTo: dateTo || null,
-      sources: sources ? sources.split(',').map(s => s.trim()) : null,
-    }
+      sources: sources ? sources.split(',').map((s) => s.trim()).filter(Boolean) : null,
+    })
+  }
 
-    onSubmit(formData)
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (query.trim()) submit(query.trim())
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label htmlFor="query" className="block text-sm font-medium text-gray-700 mb-1">
-          Search Query
-        </label>
+        <label htmlFor="query" className="kicker block mb-1">Headline / Topic</label>
         <input
           type="text"
           id="query"
@@ -32,66 +33,73 @@ function SearchForm({ onSubmit, disabled }) {
           onChange={(e) => setQuery(e.target.value)}
           required
           disabled={disabled}
-          placeholder="e.g., climate change, election results"
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+          placeholder="e.g. election results, ceasefire talks"
+          className="input-ink w-full px-3 py-2 text-[15px]"
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-3">
         <div>
-          <label htmlFor="dateFrom" className="block text-sm font-medium text-gray-700 mb-1">
-            From Date (optional)
-          </label>
+          <label htmlFor="dateFrom" className="kicker block mb-1">From</label>
           <input
             type="date"
             id="dateFrom"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
             disabled={disabled}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+            className="input-ink w-full px-3 py-2 text-sm"
           />
         </div>
-
         <div>
-          <label htmlFor="dateTo" className="block text-sm font-medium text-gray-700 mb-1">
-            To Date (optional)
-          </label>
+          <label htmlFor="dateTo" className="kicker block mb-1">To</label>
           <input
             type="date"
             id="dateTo"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
             disabled={disabled}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+            className="input-ink w-full px-3 py-2 text-sm"
           />
         </div>
       </div>
 
       <div>
-        <label htmlFor="sources" className="block text-sm font-medium text-gray-700 mb-1">
-          Sources (optional, comma-separated)
-        </label>
+        <label htmlFor="sources" className="kicker block mb-1">Restrict Outlets (optional)</label>
         <input
           type="text"
           id="sources"
           value={sources}
           onChange={(e) => setSources(e.target.value)}
           disabled={disabled}
-          placeholder="e.g., bbc-news, cnn, reuters"
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+          placeholder="bbc-news, cnn, reuters"
+          className="input-ink w-full px-3 py-2 text-sm"
         />
       </div>
 
       <button
         type="submit"
-        disabled={disabled || !query}
-        className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+        disabled={disabled || !query.trim()}
+        className="btn-ink w-full py-2.5 text-sm"
       >
-        {disabled ? 'Analyzing...' : 'Analyze News'}
+        {disabled ? 'Presses Running…' : 'Run the Newsroom ▸'}
       </button>
+
+      {!disabled && (
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => { setQuery(s); submit(s) }}
+              className="px-2 py-0.5 text-[10px] font-mono border border-ink-faint text-ink-soft hover:bg-ink hover:text-paper transition-colors"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
     </form>
   )
 }
 
 export default SearchForm
-

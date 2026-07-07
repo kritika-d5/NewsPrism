@@ -7,27 +7,24 @@ motor==3.3.2
 python-dotenv==1.0.0
 httpx==0.25.2
 aiohttp==3.9.1
-langchain==0.1.0
-langchain-openai==0.0.2
-langchain-community==0.0.10
-openai==1.6.1
-# xai-python not needed - using httpx directly for Groq API
+## langchain/openai removed: not used by current code
 pinecone>=3.0.0
-sentence-transformers==2.2.2
-transformers==4.36.0
+# sentence-transformers >=3 uses the modern huggingface_hub API
+# (2.2.2 breaks with hub >=0.26: "cannot import name 'cached_download'")
+sentence-transformers>=3.0,<4
+# transformers must stay <4.50 while torch is pinned to 2.1.x
+# (newer transformers call torch pytree APIs added in torch 2.2)
+transformers==4.44.2
 torch==2.1.1
 spacy==3.7.2
 newspaper3k==0.2.8
 lxml_html_clean>=0.4.0  # Required for newspaper3k
 beautifulsoup4==4.12.2
-feedparser==6.0.10
-nltk==3.8.1
+## feedparser/nltk removed: not used by current code
 scikit-learn==1.3.2
 numpy==1.24.3
-pandas==2.1.4
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-redis==5.0.1
-celery==5.3.4
+## redis/celery removed: not used by current code
 

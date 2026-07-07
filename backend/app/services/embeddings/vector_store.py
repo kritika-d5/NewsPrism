@@ -16,25 +16,17 @@ class VectorStore:
         self.index = None
         self.index_name = settings.PINECONE_INDEX_NAME
         
-        # Initialize Pinecone client if available and configured
         if PINECONE_AVAILABLE and settings.PINECONE_API_KEY:
             try:
-                # Initialize new Pinecone client
                 pc = Pinecone(api_key=settings.PINECONE_API_KEY)
-                
-                # Ensure index exists
                 self._ensure_index(pc)
-                
-                # Connect to the index
                 self.index = pc.Index(self.index_name)
             except Exception as e:
                 print(f"Warning: Pinecone initialization failed: {e}")
                 self.index = None
     
     def _ensure_index(self, pc):
-        """Ensure the Pinecone index exists using ServerlessSpec"""
         try:
-            # Check if index exists
             existing_indexes = [index.name for index in pc.list_indexes()]
             
             if self.index_name not in existing_indexes:
@@ -48,7 +40,6 @@ class VectorStore:
                         region="us-east-1"
                     )
                 )
-                # Wait a moment for index to be ready
                 time.sleep(10)
         except Exception as e:
             print(f"Warning: Could not ensure Pinecone index exists: {e}")
@@ -58,11 +49,9 @@ class VectorStore:
         vectors: List[Dict],
         namespace: Optional[str] = None
     ):
-        """Upsert vectors to Pinecone"""
         if not vectors or not self.index:
             return
         
-        # Format for Pinecone
         pinecone_vectors = []
         for vec in vectors:
             pinecone_vectors.append({
@@ -71,7 +60,6 @@ class VectorStore:
                 "metadata": vec.get("metadata", {})
             })
         
-        # Upsert in batches of 100
         batch_size = 100
         for i in range(0, len(pinecone_vectors), batch_size):
             batch = pinecone_vectors[i:i + batch_size]
@@ -87,7 +75,6 @@ class VectorStore:
         filter: Optional[Dict] = None,
         namespace: Optional[str] = None
     ) -> List[Dict]:
-        """Query similar vectors from Pinecone"""
         if not self.index:
             return []
             
@@ -117,7 +104,6 @@ class VectorStore:
         ids: List[str],
         namespace: Optional[str] = None
     ):
-        """Delete vectors by IDs"""
         if ids and self.index:
             try:
                 self.index.delete(ids=ids, namespace=namespace)
@@ -129,7 +115,6 @@ class VectorStore:
         filter: Dict,
         namespace: Optional[str] = None
     ):
-        """Delete vectors by metadata filter"""
         if self.index:
             try:
                 self.index.delete(filter=filter, namespace=namespace)

@@ -2,17 +2,155 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+:root {
+  --ink: #14110c;
+  --paper: #f4f1e8;
+}
+
+html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+body {
+  margin: 0;
+  background-color: var(--paper);
+  /* Faint paper-grain texture built from layered gradients (no external asset). */
+  background-image:
+    radial-gradient(rgba(20, 17, 12, 0.035) 1px, transparent 1px),
+    radial-gradient(rgba(20, 17, 12, 0.02) 1px, transparent 1px);
+  background-size: 3px 3px, 5px 5px;
+  background-position: 0 0, 1px 2px;
+  color: var(--ink);
+  font-family: "PT Serif", Georgia, serif;
 }
 
+@layer components {
+  /* --- Rules & hairlines --- */
+  .rule-thick {
+    border-top: 3px solid var(--ink);
+  }
+  .rule-thin {
+    border-top: 1px solid var(--ink);
+  }
+  .rule-double {
+    border-top: 3px double var(--ink);
+  }
+  .hairline {
+    border-color: rgba(20, 17, 12, 0.25);
+  }
+
+  /* --- Type --- */
+  .headline {
+    font-family: "Playfair Display", Georgia, serif;
+    font-weight: 900;
+    letter-spacing: -0.01em;
+    line-height: 0.98;
+    color: var(--ink);
+  }
+  .kicker {
+    font-family: "Special Elite", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    font-size: 0.66rem;
+    color: var(--ink);
+  }
+  .dateline {
+    font-family: "Special Elite", monospace;
+    letter-spacing: 0.05em;
+  }
+  .smallcaps {
+    font-variant: small-caps;
+    letter-spacing: 0.04em;
+  }
+
+  /* --- Paper card --- */
+  .card {
+    background: #fbf9f2;
+    border: 1px solid var(--ink);
+    box-shadow: 3px 3px 0 rgba(20, 17, 12, 0.9);
+  }
+  .card-flat {
+    background: #fbf9f2;
+    border: 1px solid rgba(20, 17, 12, 0.55);
+  }
+
+  /* --- Buttons --- */
+  .btn-ink {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: "Special Elite", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    border: 1px solid var(--ink);
+    transition: transform 0.05s ease;
+  }
+  .btn-ink:hover:not(:disabled) {
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0 rgba(20, 17, 12, 0.85);
+  }
+  .btn-ink:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .input-ink {
+    background: #fdfcf7;
+    border: 1px solid var(--ink);
+    font-family: "PT Serif", Georgia, serif;
+    color: var(--ink);
+  }
+  .input-ink:focus {
+    outline: none;
+    box-shadow: inset 0 -2px 0 var(--ink);
+  }
+
+  /* Halftone / crosshatch fill used for "bias density" bars. */
+  .halftone {
+    background-image: radial-gradient(var(--ink) 1.1px, transparent 1.2px);
+    background-size: 5px 5px;
+  }
+  .crosshatch {
+    background-image:
+      repeating-linear-gradient(45deg, var(--ink) 0 1px, transparent 1px 4px),
+      repeating-linear-gradient(-45deg, var(--ink) 0 1px, transparent 1px 4px);
+  }
+
+  /* Newspaper columns for long body text */
+  .news-columns {
+    column-count: 2;
+    column-gap: 2rem;
+    column-rule: 1px solid rgba(20, 17, 12, 0.25);
+  }
+  @media (max-width: 700px) {
+    .news-columns {
+      column-count: 1;
+    }
+  }
+
+  .drop-cap::first-letter {
+    font-family: "Playfair Display", Georgia, serif;
+    font-weight: 900;
+    font-size: 3.1rem;
+    line-height: 0.8;
+    float: left;
+    padding: 0.08em 0.12em 0 0;
+  }
+}
+
+::selection {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* Thin monochrome scrollbar to keep the console on-theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(20, 17, 12, 0.5);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

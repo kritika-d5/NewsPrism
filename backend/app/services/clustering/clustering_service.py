@@ -1,159 +1,131 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import numpy as np
 from sklearn.cluster import DBSCAN
-from app.services.embeddings.vector_store import VectorStore
 from app.services.embeddings.embedding_service import EmbeddingService
 from app.core.config import settings
 
 
 class ClusteringService:
+    """Groups articles that cover the same underlying event.
+
+    Articles are embedded locally with SentenceTransformers and grouped with
+    DBSCAN on cosine distance. This is fully self-contained: it does not depend
+    on any external vector database being pre-populated.
+    """
+
     def __init__(self):
-        self.vector_store = VectorStore()
         self.embedding_service = EmbeddingService()
-    
+
+    def _article_text_for_embedding(self, article: Dict[str, Any]) -> str:
+        title = (article.get("title") or "").strip()
+        body = (article.get("text") or "").strip()
+        # Title carries the strongest event signal; give it weight by prepending
+        # it, then add the lead of the body which usually restates the event.
+        combined = f"{title}. {body[:1500]}".strip()
+        return combined or title or body
+
     def cluster_articles(
         self,
         query: str,
-        article_ids: List[str],
+        articles: List[Dict[str, Any]],
         min_samples: Optional[int] = None,
-        eps: Optional[float] = None
+        eps: Optional[float] = None,
     ) -> Dict[str, List[str]]:
-        """Cluster articles by semantic similarity
-        
-        Returns:
-            Dict mapping cluster_id to list of article_ids
+        """Return a mapping of ``cluster_label -> [article_id, ...]``.
+
+        Only articles carrying non-empty text are considered. Noise points
+        (DBSCAN label -1) are attached to their nearest dense cluster when one
+        exists, otherwise dropped as singletons.
         """
-        if not article_ids:
+        usable = [
+            a for a in articles
+            if str(a.get("id") or a.get("_id")) and (a.get("text") or a.get("title"))
+        ]
+
+        if len(usable) < 2:
+            if len(usable) == 1:
+                only_id = str(usable[0].get("id") or usable[0].get("_id"))
+                return {"cluster_0": [only_id]}
             return {}
-        
-        # Get embeddings for all articles
-        embeddings = []
-        article_metadata = []
-        
-        for article_id in article_ids:
-            # Query vector store for article chunks
-            # In a real implementation, you'd fetch the stored embeddings
-            # For now, we'll need to re-embed or fetch from vector store
-            
-            # This is a simplified version - in production, you'd store
-            # article embeddings when ingesting
-            pass
-        
-        # For MVP, we'll embed article texts and cluster them
-        # In production, you'd fetch stored embeddings from vector DB
-        article_texts = []
-        article_map = {}
-        
-        # Fetch article texts (in production, get from DB)
-        # For now, we'll need to re-embed - this is simplified
-        # In real implementation, store article-level embeddings when ingesting
-        
-        # Query vector store with the query embedding to get similar articles
-        query_embedding = self.embedding_service.embed_text(query)
-        similar_articles = self.vector_store.query_vectors(
-            query_vector=query_embedding,
-            top_k=len(article_ids) * 2  # Get more to cluster
+
+        ids = [str(a.get("id") or a.get("_id")) for a in usable]
+        texts = [self._article_text_for_embedding(a) for a in usable]
+
+        embeddings = np.array(
+            self.embedding_service.embed_batch(texts), dtype=np.float32
         )
-        
-        if not similar_articles:
-            # Fallback: create single cluster
-            return {"cluster_0": article_ids}
-        
-        # Group by article_id and get representative chunks
-        article_chunks = {}
-        for result in similar_articles:
-            article_id = result["metadata"].get("article_id")
-            if article_id and article_id in article_ids:
-                if article_id not in article_chunks:
-                    article_chunks[article_id] = []
-                article_chunks[article_id].append({
-                    "text": result["metadata"].get("text", ""),
-                    "score": result["score"]
-                })
-        
-        # Get best chunk per article (highest similarity)
-        article_embeddings = []
-        article_map = {}
-        
-        for article_id, chunks in article_chunks.items():
-            if chunks:
-                # Use the chunk with highest score
-                best_chunk = max(chunks, key=lambda x: x["score"])
-                # Re-embed the chunk text (or use stored embedding)
-                embedding = self.embedding_service.embed_text(best_chunk["text"][:512])
-                article_embeddings.append(embedding)
-                article_map[len(article_embeddings) - 1] = article_id
-        
-        if len(article_embeddings) < 2:
-            # Not enough articles to cluster
-            return {"cluster_0": article_ids}
-        
-        # Convert to numpy array
-        X = np.array(article_embeddings)
-        
-        # Perform DBSCAN clustering
+
         min_samples = min_samples or settings.CLUSTERING_MIN_SAMPLES
         eps = eps or settings.CLUSTERING_EPS
-        
-        clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
-        cluster_labels = clustering.fit_predict(X)
-        
-        # Group articles by cluster
-        clusters = {}
-        for idx, label in enumerate(cluster_labels):
-            if label == -1:  # Noise point, assign to its own cluster
-                cluster_id = f"cluster_noise_{idx}"
-            else:
-                cluster_id = f"cluster_{label}"
-            
-            if cluster_id not in clusters:
-                clusters[cluster_id] = []
-            
-            article_id = article_map.get(idx)
-            if article_id:
-                clusters[cluster_id].append(article_id)
-        
+
+        clustering = DBSCAN(eps=eps, min_samples=min_samples, metric="cosine")
+        labels = clustering.fit_predict(embeddings)
+
+        # If DBSCAN found no dense region at all (everything noise), relax once
+        # so we still surface at least one comparison cluster for the user.
+        if not any(l != -1 for l in labels):
+            clustering = DBSCAN(eps=min(0.9, eps + 0.2), min_samples=2, metric="cosine")
+            labels = clustering.fit_predict(embeddings)
+            if not any(l != -1 for l in labels):
+                return {"cluster_0": ids}
+
+        clusters: Dict[str, List[str]] = {}
+        centroids: Dict[int, np.ndarray] = {}
+
+        for label in sorted(set(labels)):
+            if label == -1:
+                continue
+            member_idx = [i for i, l in enumerate(labels) if l == label]
+            clusters[f"cluster_{label}"] = [ids[i] for i in member_idx]
+            centroids[label] = embeddings[member_idx].mean(axis=0)
+
+        # Re-home noise points into the nearest cluster if reasonably close.
+        for i, label in enumerate(labels):
+            if label != -1:
+                continue
+            if not centroids:
+                continue
+            best_label = None
+            best_sim = -1.0
+            for c_label, centroid in centroids.items():
+                sim = float(
+                    np.dot(embeddings[i], centroid)
+                    / ((np.linalg.norm(embeddings[i]) * np.linalg.norm(centroid)) or 1.0)
+                )
+                if sim > best_sim:
+                    best_sim = sim
+                    best_label = c_label
+            if best_label is not None and best_sim >= (1.0 - min(0.9, eps + 0.2)):
+                clusters[f"cluster_{best_label}"].append(ids[i])
+
         return clusters
-    
+
     def find_canonical_article(
         self,
         article_ids: List[str],
-        articles_data: List[Dict]
+        articles_data: List[Dict],
     ) -> Optional[str]:
-        """Find the canonical (best representative) article for a cluster"""
         if not article_ids or not articles_data:
             return None
-        
-        # Score articles by:
-        # 1. Completeness (length)
-        # 2. Metadata quality (has author, date, etc.)
-        # 3. Early publication (first to report)
-        
-        best_score = -1
+
+        best_score = -1.0
         best_article_id = None
-        
+
         for article in articles_data:
             if article.get("id") not in article_ids:
                 continue
-            
-            score = 0
-            
-            # Completeness
+
+            score = 0.0
             text_length = len(article.get("text", ""))
             score += min(text_length / 1000, 1.0) * 0.3
-            
-            # Metadata quality
+
             if article.get("author"):
                 score += 0.2
             if article.get("published_at"):
                 score += 0.2
-            
-            # Early publication (inverse - earlier is better)
-            # This would need actual date comparison in production
-            
+
             if score > best_score:
                 best_score = score
                 best_article_id = article.get("id")
-        
-        return best_article_id or article_ids[0]
 
+        return best_article_id or article_ids[0]

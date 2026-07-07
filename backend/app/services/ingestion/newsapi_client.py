@@ -1,14 +1,39 @@
 import httpx
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.core.config import settings
 
 
 class NewsAPIClient:
+    # NewsAPI's free (Developer) plan only serves articles from roughly the
+    # last month; any `from` older than that returns 426 Upgrade Required.
+    FREE_PLAN_WINDOW_DAYS = 29
+
     def __init__(self):
         self.api_key = settings.NEWSAPI_KEY
         self.base_url = "https://newsapi.org/v2"
-    
+
+    def _clamp_to_plan_window(
+        self,
+        date_from: Optional[datetime],
+        date_to: Optional[datetime],
+    ) -> tuple[Optional[datetime], Optional[datetime]]:
+        earliest = datetime.utcnow() - timedelta(days=self.FREE_PLAN_WINDOW_DAYS)
+
+        def naive(dt: Optional[datetime]) -> Optional[datetime]:
+            return dt.replace(tzinfo=None) if dt and dt.tzinfo else dt
+
+        date_from, date_to = naive(date_from), naive(date_to)
+
+        if date_from and date_from < earliest:
+            date_from = earliest
+        # If the requested range ends before the window even starts, the plan
+        # cannot serve it at all — drop the upper bound and search recent news
+        # rather than hard-failing with a 426.
+        if date_to and date_from and date_to < date_from:
+            date_to = None
+        return date_from, date_to
+
     async def search_articles(
         self,
         query: str,
@@ -18,7 +43,7 @@ class NewsAPIClient:
         language: str = "en",
         page_size: int = 100
     ) -> List[Dict]:
-        """Search for articles using NewsAPI"""
+        date_from, date_to = self._clamp_to_plan_window(date_from, date_to)
         async with httpx.AsyncClient() as client:
             params = {
                 "apiKey": self.api_key,
@@ -26,7 +51,7 @@ class NewsAPIClient:
                 "language": language,
                 "pageSize": min(page_size, 100),
                 "sortBy": "publishedAt",
-                "searchIn": "title,description"  # Restrict search to title/desc for better relevance
+                "searchIn": "title,description"
             }
             
             if date_from:
@@ -59,7 +84,6 @@ class NewsAPIClient:
         sources: Optional[List[str]] = None,
         page_size: int = 100
     ) -> List[Dict]:
-        """Get top headlines from NewsAPI"""
         async with httpx.AsyncClient() as client:
             params = {
                 "apiKey": self.api_key,
